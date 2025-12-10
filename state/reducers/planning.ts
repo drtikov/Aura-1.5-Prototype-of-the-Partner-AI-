@@ -1,0 +1,334 @@
+
+// state/reducers/planning.ts
+// FIX: Added missing import for ConceptualProofStrategy
+import { AuraState, Action, GoalTree, Goal, GoalType, ConceptualProofStrategy, PreFlightPlan, KernelTask, KernelTaskType, SyscallPayload } from '../../types.ts';
+
+const updateParentProgress = (tree: GoalTree, childId: string): GoalTree => {
+    const child = tree[childId];
+    if (!child || !child.parentId) {
+        return tree;
+    }
+
+    const parent = tree[child.parentId];
+    if (!parent) {
+        return tree;
+    }
+
+    const siblings = parent.children.map(id => tree[id]);
+    const completedSiblings = siblings.filter(s => s?.status === 'completed');
+    const newProgress = siblings.length > 0 ? completedSiblings.length / siblings.length : 0;
+    
+    const updatedParent = { ...parent, progress: newProgress };
+    const newTree = { ...tree, [parent.id]: updatedParent };
+
+    // If parent is now complete, recurse
+    if (newProgress === 1 && parent.status !== 'completed') {
+        const completedParent = { ...updatedParent, status: 'completed' as const };
+        const treeWithCompletedParent = { ...newTree, [parent.id]: completedParent };
+        return updateParentProgress(treeWithCompletedParent, parent.id);
+    }
+    
+    return newTree;
+};
+
+const deleteGoalRecursively = (tree: GoalTree, id: string): GoalTree => {
+    const goal = tree[id];
+    if (!goal) return tree;
+
+    let newTree = { ...tree };
+    
+    // Recursively delete children first
+    if (goal.children) {
+        goal.children.forEach(childId => {
+            newTree = deleteGoalRecursively(newTree, childId);
+        });
+    }
+    
+    // Remove self from tree
+    delete newTree[id];
+    
+    // Remove self from parent's children list
+    if (goal.parentId && newTree[goal.parentId]) {
+        const parent = newTree[goal.parentId];
+        newTree[goal.parentId] = {
+            ...parent,
+            children: parent.children.filter(childId => childId !== id)
+        };
+    }
+
+    return newTree;
+};
+
+
+export const planningReducer = (state: AuraState, action: Action): Partial<AuraState> => {
+    if (action.type !== 'SYSCALL') {
+        return {};
+    }
+    const { call, args } = action.payload;
+
+    switch (call) {
+        case 'PLANNING/CLEAR_ACTIVE_GOAL':
+            return {
+                activeStrategicGoalId: null,
+                disciplineState: {
+                    ...state.disciplineState,
+                    committedGoal: null,
+                }
+            };
+        case 'BUILD_GUILD_TASK_TREE': {
+            const { plan, rootGoal } = args as { plan: PreFlightPlan, rootGoal: string };
+            if (!plan || !rootGoal) return {};
+            
+            const rootId = `goal_${self.crypto.randomUUID()}`;
+            const newTree: GoalTree = {};
+            
+            const childrenIds = plan.steps.map(step => {
+                const childId = `goal_${self.crypto.randomUUID()}`;
+                newTree[childId] = {
+                    id: childId,
+                    parentId: rootId,
+                    children: [],
+                    description: step.task,
+                    status: 'not_started',
+                    progress: 0,
+                    type: step.type === 'Research' ? GoalType.RESEARCH : GoalType.TACTICAL,
+                    personaId: step.personaId || undefined,
+                };
+                return childId;
+            });
+
+            newTree[rootId] = {
+                id: rootId,
+                parentId: null,
+                children: childrenIds,
+                description: rootGoal,
+                status: 'in_progress',
+                progress: 0,
+                type: GoalType.STRATEGIC,
+            };
+
+            const newCommittedGoal = {
+                type: GoalType.STRATEGIC,
+                description: rootGoal,
+                commitmentStrength: 0.9,
+            };
+
+            return {
+                goalTree: newTree,
+                activeStrategicGoalId: rootId,
+                disciplineState: {
+                    ...state.disciplineState,
+                    committedGoal: newCommittedGoal,
+                }
+            };
+        }
+
+        case 'BUILD_GOAL_TREE': {
+            const { decomposition, rootGoal } = args;
+            if (!decomposition || !rootGoal) return {};
+
+            const rootId = `goal_${self.crypto.randomUUID()}`;
+            const newTree: GoalTree = {};
+
+            const childrenIds = decomposition.steps.map((step: string) => {
+                const childId = `goal_${self.crypto.randomUUID()}`;
+                newTree[childId] = {
+                    id: childId,
+                    parentId: rootId,
+                    children: [],
+                    description: step,
+                    status: 'not_started',
+                    progress: 0,
+                    type: GoalType.TACTICAL,
+                };
+                return childId;
+            });
+
+            newTree[rootId] = {
+                id: rootId,
+                parentId: null,
+                children: childrenIds,
+                description: rootGoal,
+                status: 'in_progress',
+                progress: 0,
+                type: GoalType.STRATEGIC,
+                executionMode: decomposition.executionMode,
+            };
+            
+            const newCommittedGoal = {
+                type: GoalType.STRATEGIC,
+                description: rootGoal,
+                commitmentStrength: 0.9,
+            };
+
+            return {
+                goalTree: newTree,
+                activeStrategicGoalId: rootId,
+                disciplineState: {
+                    ...state.disciplineState,
+                    committedGoal: newCommittedGoal,
+                    adherenceScore: 1.0, 
+                    distractionResistance: 0.5 
+                }
+            };
+        }
+        
+        case 'BUILD_PROOF_TREE': {
+            const { strategy, rootGoal } = args as { strategy: ConceptualProofStrategy, rootGoal: string };
+            if (!strategy || !rootGoal) return {};
+
+            const rootId = `goal_${self.crypto.randomUUID()}`;
+            const newTree: GoalTree = {};
+
+            const childrenIds = strategy.strategic_plan.map((step: string) => {
+                const childId = `goal_${self.crypto.randomUUID()}`;
+                newTree[childId] = {
+                    id: childId,
+                    parentId: rootId,
+                    children: [],
+                    description: step, // The step is a lemma to prove
+                    status: 'not_started',
+                    progress: 0,
+                    type: GoalType.TACTICAL,
+                    attempts: 0,
+                };
+                return childId;
+            });
+
+            newTree[rootId] = {
+                id: rootId,
+                parentId: null,
+                children: childrenIds,
+                description: rootGoal,
+                status: 'in_progress',
+                progress: 0,
+                type: GoalType.MATHEMATICAL_PROOF,
+                attempts: 1,
+            };
+
+            return {
+                goalTree: newTree,
+                activeStrategicGoalId: rootId,
+            };
+        }
+
+        case 'UPDATE_GOAL_STATUS': {
+            const { id, status, failureReason, result } = args;
+            const goal = state.goalTree[id];
+            if (!goal || goal.status === status) {
+                return {};
+            }
+
+            const progress = status === 'completed' ? 1 : goal.progress;
+            // When a proof fails, reset its status to 'not_started' to allow for another attempt
+            const finalStatus = status === 'failed' && goal.type === GoalType.MATHEMATICAL_PROOF ? 'not_started' : status;
+            
+            const updatedGoal: Goal = { 
+                ...goal, 
+                status: finalStatus, 
+                progress, 
+                failureReason: failureReason || null,
+                result: result || goal.result,
+                // Increment attempts on failure, reset on other transitions
+                attempts: status === 'failed' ? (goal.attempts || 0) + 1 : goal.attempts,
+            };
+            let newTree = { ...state.goalTree, [id]: updatedGoal };
+
+            if (status === 'completed') {
+                newTree = updateParentProgress(newTree, id);
+            }
+            
+            // --- Deduction Engine & Reflective Mentor Logic ---
+            let newKernelState = state.kernelState;
+            let newProactiveUIState = state.proactiveUI;
+            const traceId = (action.payload as SyscallPayload).traceId;
+
+            if (status === 'failed') {
+                const newTask: KernelTask = {
+                    id: `task_deduce_${self.crypto.randomUUID()}`,
+                    type: KernelTaskType.RUN_DEDUCTION_ANALYSIS,
+                    payload: { failedGoal: goal },
+                    timestamp: Date.now(),
+                    traceId,
+                };
+                newKernelState = {
+                    ...state.kernelState,
+                    taskQueue: [...state.kernelState.taskQueue, newTask],
+                };
+            }
+
+            if (status === 'completed' || status === 'failed') {
+                const question = status === 'completed'
+                    ? 'What was the key learning from this task?'
+                    : 'What would you do differently next time?';
+                
+                newProactiveUIState = {
+                    isActive: true,
+                    type: 'reflection_prompt',
+                    question: question,
+                    options: [],
+                    originalPrompt: null,
+                    originalFile: null,
+                };
+            }
+
+            return {
+                goalTree: newTree,
+                kernelState: newKernelState,
+                proactiveUI: newProactiveUIState,
+            };
+        }
+
+        case 'UPDATE_GOAL_RESULT': {
+            const { id, historyId } = args;
+            const goal = state.goalTree[id];
+            if (!goal) return {};
+            const updatedGoal = { ...goal, resultHistoryId: historyId };
+            return {
+                goalTree: {
+                    ...state.goalTree,
+                    [id]: updatedGoal,
+                }
+            };
+        }
+        
+        case 'ADD_SUBGOAL': {
+             const { parentId, description } = args;
+             const parent = state.goalTree[parentId];
+             if (!parent) return {};
+             
+             const newId = `goal_${self.crypto.randomUUID()}`;
+             const newGoal: Goal = {
+                 id: newId,
+                 parentId,
+                 children: [],
+                 description,
+                 status: 'not_started',
+                 progress: 0,
+                 type: GoalType.TACTICAL
+             };
+             
+             return {
+                 goalTree: {
+                     ...state.goalTree,
+                     [parentId]: { ...parent, children: [...parent.children, newId] },
+                     [newId]: newGoal
+                 }
+             };
+        }
+
+        case 'DELETE_GOAL': {
+            const { id } = args;
+            return {
+                goalTree: deleteGoalRecursively(state.goalTree, id)
+            };
+        }
+
+        case 'UPDATE_GOAL_OUTCOME': // Stubbed
+            console.log(`Action ${call} is not fully implemented.`);
+            return {};
+
+        default:
+            return {};
+    }
+};

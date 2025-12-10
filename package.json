@@ -1,0 +1,26 @@
+{
+  "name": "aura-web-app",
+  "version": "1.0.0",
+  "description": "Aura Symbiotic AGI Web Application.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.12"
+  },
+  "dependencies": {
+    "@google/genai": "^0.14.0",
+    "i18next": "^23.11.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^14.1.2"
+  }
+}
